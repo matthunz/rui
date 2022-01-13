@@ -33,7 +33,7 @@ pub fn greet() {
             let setter = count.clone();
 
             Html::new("button")
-                .on_click(move |_event| setter.set(*setter + 1))
+                .on_click(move |_event| setter.set_with(|count| count + 1))
                 .child(format!("You clicked this {} time(s)", *count))
         }
     }

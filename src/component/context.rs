@@ -41,6 +41,20 @@ where
             .call1(&JsValue::null(), &value.into())
             .unwrap();
     }
+
+    pub fn set_with<F>(&self, f: F)
+    where
+        F: FnOnce(T) -> T + 'static,
+    {
+        let closure = Closure::once(Box::new(move |value: JsValue| {
+            let t: T = value.into_serde().unwrap();
+            f(t).into()
+        }) as Box<dyn FnOnce(JsValue) -> JsValue>);
+
+        self.set_value
+            .call1(&JsValue::null(), &closure.into_js_value())
+            .unwrap();
+    }
 }
 
 impl<T> Deref for State<T> {
