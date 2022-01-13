@@ -3,6 +3,7 @@ mod utils;
 use core::ops::Deref;
 use js_sys::{Array, Function, Object, Reflect};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -12,38 +13,58 @@ use wasm_bindgen::prelude::*;
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen]
-extern "C" {
-    fn alert(s: &str);
-}
-
-#[wasm_bindgen]
 pub fn greet() {
     let window = web_sys::window().expect("no global `window` exists");
     let document = window.document().expect("should have a document on window");
     let root = document.get_element_by_id("root").unwrap();
 
-    struct Counter;
+    #[derive(Serialize, Deserialize)]
+    struct Counter {
+        initial: u32,
+    }
 
     impl Component for Counter {
         fn render(&self) -> Element {
-            let count = State::new(0);
-
+            let count = State::new(self.initial);
             let setter = count.clone();
             let f = Closure::wrap(Box::new(move || setter.set(*setter + 1)) as Box<dyn FnMut()>);
 
-            Element::new("button")
+            Html::new("button")
                 .property("onClick", &f.into_js_value())
+                .to_element()
                 .child(count.value)
         }
     }
 
-    let element = Element::new_component(Counter);
-
+    let element = Counter { initial: 3 }.to_element();
     render(element, &root);
 }
 
 pub fn render(element: Element, container: &web_sys::Element) {
     react_sys::react_dom::render(&element.create(), container);
+}
+
+pub struct Html {
+    tag: JsValue,
+    properties: JsValue,
+}
+
+impl Html {
+    pub fn new(tag: impl Into<JsValue>) -> Self {
+        Self {
+            tag: tag.into(),
+            properties: Object::new().into(),
+        }
+    }
+
+    pub fn property(self, key: &str, value: &JsValue) -> Self {
+        Reflect::set(&self.properties, &key.into(), value).unwrap();
+        self
+    }
+
+    pub fn to_element(self) -> Element {
+        self.into()
+    }
 }
 
 pub struct Element {
@@ -52,30 +73,28 @@ pub struct Element {
     children: Array,
 }
 
-impl Element {
-    pub fn new(kind: impl Into<JsValue>) -> Self {
+impl From<Html> for Element {
+    fn from(html: Html) -> Self {
         Self {
-            kind: kind.into(),
-            properties: Object::new().into(),
+            kind: html.tag,
+            properties: html.properties,
             children: Array::default(),
         }
     }
+}
 
-    pub fn new_component<C: Component + 'static>(component: C) -> Self {
-        let f =
-            Closure::wrap(Box::new(move || component.render().create())
-                as Box<dyn FnMut() -> react_sys::Element>);
+impl Element {
+    pub fn new_component<C: Component + 'static>(component: &C) -> Self {
+        let f = Closure::wrap(Box::new(move |props: JsValue| {
+            let c: C = props.into_serde().unwrap();
+            c.render().create()
+        }) as Box<dyn FnMut(JsValue) -> react_sys::Element>);
+
         Self {
             kind: f.into_js_value(),
-            properties: JsValue::null(),
+            properties: JsValue::from_serde(component).unwrap(),
             children: Array::default(),
         }
-    }
-
-    pub fn property(self, key: &str, value: &JsValue) -> Self {
-        Reflect::set(&self.properties, &key.into(), value).unwrap();
-
-        self
     }
 
     pub fn child(self, node: impl Into<JsValue>) -> Self {
@@ -88,8 +107,21 @@ impl Element {
     }
 }
 
-pub trait Component {
+pub trait Component: Serialize + DeserializeOwned {
     fn render(&self) -> Element;
+
+    fn to_element(&self) -> Element {
+        let f = Closure::wrap(Box::new(move |props: JsValue| {
+            let c: Self = props.into_serde().unwrap();
+            c.render().create()
+        }) as Box<dyn FnMut(JsValue) -> react_sys::Element>);
+
+        Element {
+            kind: f.into_js_value(),
+            properties: JsValue::from_serde(self).unwrap(),
+            children: Array::default(),
+        }
+    }
 }
 
 #[derive(Clone)]

@@ -30,7 +30,8 @@ js-sys = "0.3.55"
 web-sys = "0.3.55"
 react-sys = "1.0.0-alpha.17"
 
-serde = "1.0.133"
+# TODO remove derive macros
+serde = { version = "1.0.133", features = ["derive"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.13"
