@@ -1,6 +1,8 @@
 mod utils;
 
-use js_sys::Array;
+use core::ops::Deref;
+use js_sys::{Array, Function, Object, Reflect};
+use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -20,26 +22,60 @@ pub fn greet() {
     let document = window.document().expect("should have a document on window");
     let root = document.get_element_by_id("root").unwrap();
 
-    let element = Element::html("h1").child("Hello World!");
+    struct Counter;
 
-    render(&element, &root);
+    impl Component for Counter {
+        fn render(&self) -> Element {
+            let count = State::new(0);
+
+            let setter = count.clone();
+            let f = Closure::wrap(Box::new(move || setter.set(*setter + 1)) as Box<dyn FnMut()>);
+
+            Element::new("button")
+                .property("onClick", &f.into_js_value())
+                .child(count.value)
+        }
+    }
+
+    let element = Element::new_component(Counter);
+
+    render(element, &root);
 }
 
-pub fn render(element: &Element, container: &web_sys::Element) {
+pub fn render(element: Element, container: &web_sys::Element) {
     react_sys::react_dom::render(&element.create(), container);
 }
 
 pub struct Element {
     kind: JsValue,
+    properties: JsValue,
     children: Array,
 }
 
 impl Element {
-    pub fn html(kind: impl Into<JsValue>) -> Self {
+    pub fn new(kind: impl Into<JsValue>) -> Self {
         Self {
             kind: kind.into(),
+            properties: Object::new().into(),
             children: Array::default(),
         }
+    }
+
+    pub fn new_component<C: Component + 'static>(component: C) -> Self {
+        let f =
+            Closure::wrap(Box::new(move || component.render().create())
+                as Box<dyn FnMut() -> react_sys::Element>);
+        Self {
+            kind: f.into_js_value(),
+            properties: JsValue::null(),
+            children: Array::default(),
+        }
+    }
+
+    pub fn property(self, key: &str, value: &JsValue) -> Self {
+        Reflect::set(&self.properties, &key.into(), value).unwrap();
+
+        self
     }
 
     pub fn child(self, node: impl Into<JsValue>) -> Self {
@@ -47,7 +83,46 @@ impl Element {
         self
     }
 
-    pub fn create(&self) -> react_sys::Element {
-        react_sys::create_element(&self.kind, &JsValue::null(), &self.children)
+    pub fn create(self) -> react_sys::Element {
+        react_sys::create_element(&self.kind, &self.properties.into(), &self.children)
+    }
+}
+
+pub trait Component {
+    fn render(&self) -> Element;
+}
+
+#[derive(Clone)]
+pub struct State<T> {
+    value: T,
+    set_value: Function,
+}
+
+impl<T> State<T>
+where
+    T: DeserializeOwned + Into<JsValue>,
+{
+    pub fn new(initial: T) -> Self {
+        let array = react_sys::use_state(initial.into());
+        let f: Function = array[1].clone().into();
+        Self {
+            value: array[0].clone().into_serde().unwrap(),
+            set_value: f,
+        }
+    }
+
+    // TODO function as argument to set state
+    pub fn set(&self, value: T) {
+        self.set_value
+            .call1(&JsValue::null(), &value.into())
+            .unwrap();
+    }
+}
+
+impl<T> Deref for State<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
     }
 }
