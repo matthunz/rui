@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 mod component;
-pub use component::{Component, State};
+pub use component::{Component, Context, State};
 
 mod element;
 pub use element::{Element, IntoElement};
@@ -28,8 +28,8 @@ pub fn greet() {
     }
 
     impl Component for Counter {
-        fn render(&self) -> Element {
-            let count = State::new(self.initial);
+        fn render(&self, context: Context) -> Element {
+            let count = context.state(self.initial);
             let setter = count.clone();
 
             Html::new("button")
